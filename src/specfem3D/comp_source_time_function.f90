@@ -25,14 +25,14 @@
 !
 !=====================================================================
 
-  double precision function comp_source_time_function(t,hdur,it_index)
+  double precision function comp_source_time_function(t,hdur,it_index,isource)
 
   use constants, only: EXTERNAL_SOURCE_TIME_FUNCTION
 
   implicit none
 
   double precision,intent(in) :: t,hdur
-  integer, intent(in) :: it_index
+  integer, intent(in) :: it_index, isource
 
   ! local parameters
   double precision, external :: comp_source_time_function_heavi
@@ -40,7 +40,7 @@
 
   if (EXTERNAL_SOURCE_TIME_FUNCTION) then
     ! external stf
-    comp_source_time_function = comp_source_time_function_ext(it_index)
+    comp_source_time_function = comp_source_time_function_ext(it_index, isource)
   else
     ! quasi Heaviside
     comp_source_time_function = comp_source_time_function_heavi(t,hdur)
@@ -194,13 +194,13 @@
 !-------------------------------------------------------------------------------------------------
 !
 
-  double precision function comp_source_time_function_ext(it_index)
+  double precision function comp_source_time_function_ext(it_index, isource)
 
   use specfem_par, only: SIMULATION_TYPE, NSTEP, user_source_time_function
 
   implicit none
 
-  integer,intent(in) :: it_index
+  integer,intent(in) :: it_index, isource
 
   ! local parameters
   integer :: it_tmp
@@ -227,7 +227,7 @@
   if (it_tmp > NSTEP) it_tmp = NSTEP
 
   ! gets stored STF
-  comp_source_time_function_ext = user_source_time_function(it_tmp)
+  comp_source_time_function_ext = user_source_time_function(isource, it_tmp)
 
   end function comp_source_time_function_ext
 
@@ -238,12 +238,12 @@
   subroutine read_external_source_time_function()
 
   use constants, only: IIN, MAX_STRING_LEN
-  use specfem_par, only: NSTEP, user_source_time_function, USE_LDDRK
+  use specfem_par, only: NSTEP, user_source_time_function, USE_LDDRK, NSOURCES
 
   implicit none
 
   ! local parameters
-  integer :: i,ier
+  integer :: i,ier,n
   character(len=MAX_STRING_LEN) :: external_source_time_function_filename
   character(len=256) :: line
 
@@ -257,103 +257,109 @@
   endif
 
   ! Allocate the source time function array to the number of time steps.
-  allocate(user_source_time_function(NSTEP),stat=ier)
+  allocate(user_source_time_function(NSOURCES, NSTEP),stat=ier)
   if (ier /= 0) stop 'Error allocating external user source time function array'
-  user_source_time_function(:) = 0.d0
+  user_source_time_function(:, :) = 0.d0
 
-  ! Read in source time function.
-  open(unit=IIN, file=trim(external_source_time_function_filename), &
-       status='old', form='formatted', action='read', iostat=ier)
-  if (ier /= 0) then
-    print *,'Error could not open external source file: ',trim(external_source_time_function_filename)
-    stop 'Error opening external source time function file DATA/stf'
-  endif
+  do n=1,NSOURCES
+     if (NSOURCES > 1) then
+        write(external_source_time_function_filename, "(A,I4.4)") "DATA/stf", n
+     endif
 
-  ! gets number of file entries
-  i = 0
-  do while (ier == 0)
-    read(IIN,"(a256)",iostat=ier) line
-    if (ier == 0) then
-      ! suppress leading white spaces, if any
-      line = adjustl(line)
+     ! Read in source time function.
+     open(unit=IIN, file=trim(external_source_time_function_filename), &
+          status='old', form='formatted', action='read', iostat=ier)
+     if (ier /= 0) then
+        print *,'Error could not open external source file: ',trim(external_source_time_function_filename)
+        stop 'Error opening external source time function file DATA/stf'
+     endif
 
-      ! skip empty/comment lines
-      if (len_trim(line) == 0) cycle
-      if (line(1:1) == '#' .or. line(1:1) == '!') cycle
-      ! stop 'error in format of external_source_time_function_filename, no comments are allowed in it'
+     ! gets number of file entries
+     i = 0
+     do while (ier == 0)
+        read(IIN,"(a256)",iostat=ier) line
+        if (ier == 0) then
+           ! suppress leading white spaces, if any
+           line = adjustl(line)
 
-      ! increases counter
-      i = i + 1
-    endif
-  enddo
-  rewind(IIN)
+           ! skip empty/comment lines
+           if (len_trim(line) == 0) cycle
+           if (line(1:1) == '#' .or. line(1:1) == '!') cycle
+           ! stop 'error in format of external_source_time_function_filename, no comments are allowed in it'
 
-  ! checks number of lines
-  if (i < 1) then
-    print *,'Error: External source time function file ',trim(trim(external_source_time_function_filename)),'has no valid data;'
-    print *,'       the number of time steps is < 1. Please check the file...'
-    stop 'Error: the number of time steps in external_source_time_function_filename is < 1'
-  endif
-
-  if (i > NSTEP) then
-    print *
-    print *,'****************************************************************************************'
-    print *,'Warning: ',trim(external_source_time_function_filename),' contains more than NSTEP time steps,'
-    print *,'         only the first NSTEP=',NSTEP,' will be read, all the others will be ignored.'
-    print *,'****************************************************************************************'
-    print *
-  endif
-
-  ! checks number of time steps read
-  if (i < NSTEP) then
-    print *,'Problem when reading external source time file: ', trim(external_source_time_function_filename)
-    print *,'  number of time steps in the simulation = ',NSTEP
-    print *,'  number of time steps read from the source time function = ',i
-    print *,'Please make sure that the number of time steps in the external source file read is greater or &
-             &equal to the number of time steps in the simulation'
-    stop 'Error invalid number of time steps in external source time file'
-  endif
-
-  ! file format: DATA/stf allows for comment lines
-  ! # comment
-  ! stf_val
-  ! stf_val
-  ! ...
-
-  ! read the time step used and check that it is the same as DT used for the code
-  ier = 0
-  i = 0
-  do while (ier == 0)
-    read(IIN,"(a256)",iostat=ier) line
-    if (ier == 0) then
-      ! suppress leading white spaces, if any
-      line = adjustl(line)
-
-      ! skip empty/comment lines
-      if (len_trim(line) == 0) cycle
-      if (line(1:1) == '#' .or. line(1:1) == '!') cycle
-
-      ! increases counter
-      i = i + 1
-
-      ! gets STF
-      if (i <= NSTEP) then
-        ! read the source values
-        read(line,*,iostat=ier) user_source_time_function(i)
-        if (ier /= 0) then
-          print *,'Problem when reading external source time file: ', trim(external_source_time_function_filename)
-          print *,'  line   : ',trim(line)
-          print *,'  counter: ',i
-          print *,'Please check, file format should be: '
-          print *,'  #(optional)comment '
-          print *,'  stf-value'
-          print *,'  stf-value'
-          print *,'  ..'
-          stop 'Error reading external source time file with invalid format'
+           ! increases counter
+           i = i + 1
         endif
-      endif
+     enddo
+     rewind(IIN)
 
-    endif
+     ! checks number of lines
+     if (i < 1) then
+        print *,'Error: External source time function file ',trim(trim(external_source_time_function_filename)),'has no valid data;'
+        print *,'       the number of time steps is < 1. Please check the file...'
+        stop 'Error: the number of time steps in external_source_time_function_filename is < 1'
+     endif
+
+     if (i > NSTEP) then
+        print *
+        print *,'****************************************************************************************'
+        print *,'Warning: ',trim(external_source_time_function_filename),' contains more than NSTEP time steps,'
+        print *,'         only the first NSTEP=',NSTEP,' will be read, all the others will be ignored.'
+        print *,'****************************************************************************************'
+        print *
+     endif
+
+     ! checks number of time steps read
+     if (i < NSTEP) then
+        print *,'Problem when reading external source time file: ', trim(external_source_time_function_filename)
+        print *,'  number of time steps in the simulation = ',NSTEP
+        print *,'  number of time steps read from the source time function = ',i
+        print *,'Please make sure that the number of time steps in the external source file read is greater or &
+             &equal to the number of time steps in the simulation'
+        stop 'Error invalid number of time steps in external source time file'
+     endif
+
+     ! file format: DATA/stf allows for comment lines
+     ! # comment
+     ! stf_val
+     ! stf_val
+     ! ...
+
+     ! read the time step used and check that it is the same as DT used for the code
+     ier = 0
+     i = 0
+     do while (ier == 0)
+        read(IIN,"(a256)",iostat=ier) line
+        if (ier == 0) then
+           ! suppress leading white spaces, if any
+           line = adjustl(line)
+
+           ! skip empty/comment lines
+           if (len_trim(line) == 0) cycle
+           if (line(1:1) == '#' .or. line(1:1) == '!') cycle
+
+           ! increases counter
+           i = i + 1
+
+           ! gets STF
+           if (i <= NSTEP) then
+              ! read the source values
+              read(line,*,iostat=ier) user_source_time_function(n, i)
+              if (ier /= 0) then
+                 print *,'Problem when reading external source time file: ', trim(external_source_time_function_filename)
+                 print *,'  line   : ',trim(line)
+                 print *,'  counter: ',i
+                 print *,'Please check, file format should be: '
+                 print *,'  #(optional)comment '
+                 print *,'  stf-value'
+                 print *,'  stf-value'
+                 print *,'  ..'
+                 stop 'Error reading external source time file with invalid format'
+              endif
+           endif
+
+        endif
+     enddo
   enddo
 
   ! closes external STF file

@@ -522,7 +522,7 @@
       stf = comp_source_time_function_rickr(time_source_dble,f0)
     case (2)
       ! Heaviside (step) source time function
-      stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource),it_index)
+      stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource),it_index, isource)
     case (3)
       ! Monochromatic source time function
       f0 = 1.d0 / hdur(isource) ! using hdur as a PERIOD just to avoid changing FORCESOLUTION file format
@@ -540,7 +540,7 @@
       f0 = 1.d0 / hdur(isource) ! using half duration as a FREQUENCY just to avoid changing CMTSOLUTION file format
       stf = comp_source_time_function_mono(time_source_dble,f0)
     else
-      stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource),it_index)
+      stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource),it_index,isource)
     endif
   endif
 
